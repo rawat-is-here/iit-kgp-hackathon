@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy.optimize import minimize
 from sklearn.neural_network import MLPRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error
 
@@ -98,15 +99,17 @@ y_test_phys = simulate_pfr(best_params, F_te, C0_te, T_in_te, L_te, T_j_te)
 X_train['y_phys'] = y_train_phys
 X_test['y_phys'] = y_test_phys
 
-# Fit ML Regressor
-print("[4/5] Training final Physics-Informed MLP Regressor...")
+# Prepare data for ML
 all_features = list(X_train.columns)
-
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train[all_features])
 X_test_scaled = scaler.transform(X_test[all_features])
 
-# Multi-Layer Perceptron Regressor
+# Fit ML Regressors
+print("[4/5] Training final Physics-Informed Blended Ensemble...")
+
+# 1. Multi-Layer Perceptron Regressor
+print("  Training MLP Neural Network...")
 mlp = MLPRegressor(
     random_state=42, 
     alpha=0.001, 
@@ -115,22 +118,38 @@ mlp = MLPRegressor(
     max_iter=3000
 )
 mlp.fit(X_train_scaled, y_train)
+train_preds_mlp = np.clip(mlp.predict(X_train_scaled), 0.0, 100.0)
 
-# Calculate final training RMSE
-train_preds = np.clip(mlp.predict(X_train_scaled), 0.0, 100.0)
-train_rmse = np.sqrt(mean_squared_error(y_train, train_preds))
-print(f"  Training RMSE: {train_rmse:.4f}%")
+# 2. Hist Gradient Boosting Regressor
+print("  Training HistGradientBoosting Regressor...")
+hgb = HistGradientBoostingRegressor(
+    random_state=42,
+    max_depth=3,
+    learning_rate=0.05,
+    max_iter=100
+)
+hgb.fit(X_train_scaled, y_train)
+train_preds_hgb = np.clip(hgb.predict(X_train_scaled), 0.0, 100.0)
+
+# Blended training predictions (70% MLP, 30% HGB)
+train_preds_blend = 0.7 * train_preds_mlp + 0.3 * train_preds_hgb
+train_rmse = np.sqrt(mean_squared_error(y_train, train_preds_blend))
+print(f"  Ensemble Training RMSE: {train_rmse:.4f}%")
 
 print("[5/5] Generating final predictions for test dataset...")
-test_preds = np.clip(mlp.predict(X_test_scaled), 0.0, 100.0)
+test_preds_mlp = np.clip(mlp.predict(X_test_scaled), 0.0, 100.0)
+test_preds_hgb = np.clip(hgb.predict(X_test_scaled), 0.0, 100.0)
+
+# Blended test predictions
+test_preds_blend = 0.7 * test_preds_mlp + 0.3 * test_preds_hgb
 
 # Create submission file
 submission = pd.DataFrame({
-    'overall_yield': np.round(test_preds, 3)
+    'overall_yield': np.round(test_preds_blend, 3)
 })
 
 # Save to predictions.csv
 submission.to_csv('predictions.csv', index=False)
-print("\nSuccess! Predictions saved to 'predictions.csv'.")
+print("\nSuccess! Ensemble predictions saved to 'predictions.csv'.")
 print("Important: Rename 'predictions.csv' to your '[TeamName].csv' before submitting!")
 print("Cleaned shape verified: exactly 50 rows.")
