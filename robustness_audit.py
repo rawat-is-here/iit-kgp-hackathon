@@ -7,14 +7,11 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-# Load datasets
 df_150 = pd.read_csv('train_dataset.csv')
 features = ['flow_rate_L_min', 'concentration_mol_L', 'inlet_temperature_K', 'length_m', 'jacket_temperature_K']
 
-# 10 outliers identified
 outliers_idx = [97, 77, 149, 86, 30, 23, 142, 18, 57, 26]
 
-# PFR ODE Simulator
 def simulate_pfr(params, F, C0, T_in, L, T_j, N_steps=30):
     log_alpha, log_A1, E1, log_A2, E2, log_scale, order_a, order_b = params
     alpha = np.exp(log_alpha)
@@ -57,7 +54,6 @@ def fit_pfr_ode(F_tr, C0_tr, T_in_tr, L_tr, T_j_tr, y_tr):
     return res.x
 
 def run_evaluation(df_train_full, remove_outliers=True, seed=42, n_splits=5):
-    # Set up KFold
     cv = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
     
     oof_mlp = np.zeros(len(df_train_full))
@@ -65,9 +61,7 @@ def run_evaluation(df_train_full, remove_outliers=True, seed=42, n_splits=5):
     
     y = df_train_full['overall_yield'].values
     
-    # We want to keep track of indices to evaluate
     for train_idx, val_idx in cv.split(df_train_full):
-        # Determine training set based on whether we remove outliers
         if remove_outliers:
             train_idx_clean = [idx for idx in train_idx if idx not in outliers_idx]
         else:
@@ -76,7 +70,6 @@ def run_evaluation(df_train_full, remove_outliers=True, seed=42, n_splits=5):
         train_fold = df_train_full.iloc[train_idx_clean].copy()
         val_fold = df_train_full.iloc[val_idx].copy()
         
-        # Features + engineering
         for fold in [train_fold, val_fold]:
             fold['residence_time'] = fold['length_m'] / fold['flow_rate_L_min']
             fold['temp_diff'] = fold['jacket_temperature_K'] - fold['inlet_temperature_K']
@@ -85,14 +78,12 @@ def run_evaluation(df_train_full, remove_outliers=True, seed=42, n_splits=5):
             
         cols = features + ['residence_time', 'temp_diff', 'inv_temp_inlet', 'inv_temp_jacket']
         
-        # Fit physical model on training fold only
         F_tr, C0_tr, T_in_tr, L_tr, T_j_tr = (
             train_fold['flow_rate_L_min'].values, train_fold['concentration_mol_L'].values,
             train_fold['inlet_temperature_K'].values, train_fold['length_m'].values, train_fold['jacket_temperature_K'].values
         )
         best_params = fit_pfr_ode(F_tr, C0_tr, T_in_tr, L_tr, T_j_tr, train_fold['overall_yield'].values)
         
-        # Generate y_phys
         train_fold['y_phys'] = simulate_pfr(best_params, F_tr, C0_tr, T_in_tr, L_tr, T_j_tr)
         val_fold['y_phys'] = simulate_pfr(
             best_params, val_fold['flow_rate_L_min'].values, val_fold['concentration_mol_L'].values,
@@ -105,12 +96,10 @@ def run_evaluation(df_train_full, remove_outliers=True, seed=42, n_splits=5):
         X_tr_scaled = scaler.fit_transform(train_fold[all_cols])
         X_va_scaled = scaler.transform(val_fold[all_cols])
         
-        # MLP
         mlp = MLPRegressor(random_state=seed, alpha=0.001, hidden_layer_sizes=(50, 50), learning_rate_init=0.01, max_iter=3000)
         mlp.fit(X_tr_scaled, train_fold['overall_yield'].values)
         oof_mlp[val_idx] = np.clip(mlp.predict(X_va_scaled), 0.0, 100.0)
         
-        # HGB
         hgb = HistGradientBoostingRegressor(random_state=seed, max_depth=3, learning_rate=0.05, max_iter=100)
         hgb.fit(X_tr_scaled, train_fold['overall_yield'].values)
         oof_hgb[val_idx] = np.clip(hgb.predict(X_va_scaled), 0.0, 100.0)
@@ -128,9 +117,7 @@ for n_splits in n_splits_list:
     rmses_blend = []
     for seed in seeds:
         oof_mlp, oof_hgb, y = run_evaluation(df_150, remove_outliers=True, seed=seed, n_splits=n_splits)
-        # Using 70/30 weight for now
         blend = 0.7 * oof_mlp + 0.3 * oof_hgb
-        # Since we evaluate on the entire 150 rows (including the 10 outliers in validation folds)
         rmse = np.sqrt(mean_squared_error(y, blend))
         rmses_blend.append(rmse)
         print(f"  Seed {seed} RMSE (on full 150 rows): {rmse:.4f}")
@@ -140,12 +127,10 @@ print("\n==================================================")
 print("TEST 2: Outlier Cleaning Decision Validation")
 print("Evaluating model performance on the FULL 150 rows validation")
 print("==================================================")
-# Case A: Trained on clean (140 rows), validated on full 150 rows (above Test 1 seed 42 already did this)
 oof_mlp_clean, oof_hgb_clean, y = run_evaluation(df_150, remove_outliers=True, seed=42, n_splits=5)
 blend_clean = 0.7 * oof_mlp_clean + 0.3 * oof_hgb_clean
 rmse_clean_on_150 = np.sqrt(mean_squared_error(y, blend_clean))
 
-# Case B: Trained on full 150 rows, validated on full 150 rows
 oof_mlp_full, oof_hgb_full, y = run_evaluation(df_150, remove_outliers=False, seed=42, n_splits=5)
 blend_full = 0.7 * oof_mlp_full + 0.3 * oof_hgb_full
 rmse_full_on_150 = np.sqrt(mean_squared_error(y, blend_full))
@@ -173,7 +158,6 @@ for w_mlp in np.linspace(0.0, 1.0, 11):
 
 print(f"Optimal MLP weight: {best_w:.2f} (RMSE: {min_rmse:.4f})")
 
-# Let's save the best blend predictions for test evaluation in Step 4
 best_blend = best_w * oof_mlp_clean + (1.0 - best_w) * oof_hgb_clean
 
 print("\n==================================================")
@@ -200,12 +184,10 @@ df_analysis['err'] = y - best_blend
 df_analysis['abs_err'] = np.abs(df_analysis['err'])
 df_analysis['residence_time'] = df_analysis['length_m'] / df_analysis['flow_rate_L_min']
 
-# Print top 5 rows with largest error in clean set (excluding the 10 outliers we purposely didn't train on)
 clean_rows = df_analysis.drop(index=outliers_idx)
 print("\nTop 5 largest errors in the CLEAN dataset (legitimate points):")
 print(clean_rows.sort_values(by='abs_err', ascending=False)[['flow_rate_L_min', 'inlet_temperature_K', 'length_m', 'jacket_temperature_K', 'residence_time', 'overall_yield', 'pred', 'err']].head(5))
 
-# Analyze absolute error by groups
 print("\nError analysis by feature quantiles:")
 for col in ['inlet_temperature_K', 'jacket_temperature_K', 'residence_time', 'concentration_mol_L']:
     low_mask = clean_rows[col] <= clean_rows[col].quantile(0.25)

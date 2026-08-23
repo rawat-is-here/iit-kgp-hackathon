@@ -3,7 +3,6 @@ import pandas as pd
 df_train = pd.read_csv(r'c:/Users/akash/OneDrive/Desktop/IIT KGP/train_dataset.csv')
 df_train['residence_time'] = df_train['length_m'] / df_train['flow_rate_L_min']
 
-# Filter for zero-yield rows
 df_zero = df_train[df_train['overall_yield'] == 0.0]
 
 print("Zero-yield rows:")

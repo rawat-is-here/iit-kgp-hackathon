@@ -7,14 +7,12 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error
 
-# Load train dataset
 df_train = pd.read_csv(r'c:/Users/akash/OneDrive/Desktop/IIT KGP/train_dataset.csv')
 
 features = ['flow_rate_L_min', 'concentration_mol_L', 'inlet_temperature_K', 'length_m', 'jacket_temperature_K']
 X = df_train[features].copy()
 y = df_train['overall_yield'].copy().values
 
-# Feature engineering
 X['residence_time'] = X['length_m'] / X['flow_rate_L_min']
 X['temp_diff'] = X['jacket_temperature_K'] - X['inlet_temperature_K']
 X['inv_temp_inlet'] = 1.0 / X['inlet_temperature_K']
@@ -22,7 +20,6 @@ X['inv_temp_jacket'] = 1.0 / X['jacket_temperature_K']
 
 all_features = list(X.columns)
 
-# We will evaluate different models using 5-Fold CV
 cv = KFold(n_splits=5, shuffle=True, random_state=42)
 
 models = {
@@ -71,11 +68,9 @@ params = {
 for name, model in models.items():
     print(f"\nTuning {name}...")
     
-    # We will do a manual cross-validation loop to scale features correctly for SVR/MLP
     rmses = []
     best_params_list = []
     
-    # Run Grid Search within each fold to prevent data leakage during scaling
     for train_idx, val_idx in cv.split(X):
         X_train, y_train = X.iloc[train_idx].copy(), y[train_idx]
         X_val, y_val = X.iloc[val_idx].copy(), y[val_idx]
@@ -96,5 +91,4 @@ for name, model in models.items():
         best_params_list.append(grid.best_params_)
         
     print(f"{name} CV RMSE: {np.mean(rmses):.4f} +/- {np.std(rmses):.4f}")
-    # Print the most common best parameters
     print("Sample Best Parameters:", best_params_list[0])

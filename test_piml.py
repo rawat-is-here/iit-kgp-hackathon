@@ -7,20 +7,17 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error
 
-# Load cleaned dataset
 df = pd.read_csv('trainer_new.csv')
 
 features = ['flow_rate_L_min', 'concentration_mol_L', 'inlet_temperature_K', 'length_m', 'jacket_temperature_K']
 X = df[features].copy()
 y = df['overall_yield'].copy().values
 
-# Standard features
 X['residence_time'] = X['length_m'] / X['flow_rate_L_min']
 X['temp_diff'] = X['jacket_temperature_K'] - X['inlet_temperature_K']
 X['inv_temp_inlet'] = 1.0 / X['inlet_temperature_K']
 X['inv_temp_jacket'] = 1.0 / X['jacket_temperature_K']
 
-# We will fit the physical model inside each fold
 cv = KFold(n_splits=5, shuffle=True, random_state=42)
 
 def predict_yield_phys(params, F, T_in, L, T_j):
@@ -54,7 +51,6 @@ def fit_physical_model(F_tr, T_in_tr, L_tr, T_j_tr, y_tr):
     ])
     return res.x
 
-# Lists to store CV predictions
 phys_cv_preds = np.zeros(len(df))
 piml_et_preds = np.zeros(len(df))
 piml_mlp_preds = np.zeros(len(df))
@@ -63,18 +59,15 @@ for train_idx, val_idx in cv.split(X):
     X_train, y_train = X.iloc[train_idx].copy(), y[train_idx]
     X_val, y_val = X.iloc[val_idx].copy(), y[val_idx]
     
-    # 1. Fit physical kinetics model on training split only
     F_tr, T_in_tr, L_tr, T_j_tr = X_train['flow_rate_L_min'].values, X_train['inlet_temperature_K'].values, X_train['length_m'].values, X_train['jacket_temperature_K'].values
     best_params = fit_physical_model(F_tr, T_in_tr, L_tr, T_j_tr, y_train)
     
-    # Predict with physical model
     y_train_phys = predict_yield_phys(best_params, F_tr, T_in_tr, L_tr, T_j_tr)
     
     F_va, T_in_va, L_va, T_j_va = X_val['flow_rate_L_min'].values, X_val['inlet_temperature_K'].values, X_val['length_m'].values, X_val['jacket_temperature_K'].values
     y_val_phys = predict_yield_phys(best_params, F_va, T_in_va, L_va, T_j_va)
     phys_cv_preds[val_idx] = y_val_phys
     
-    # 2. Add physical prediction as a feature
     X_train_piml = X_train.copy()
     X_val_piml = X_val.copy()
     X_train_piml['y_phys'] = y_train_phys
@@ -82,17 +75,14 @@ for train_idx, val_idx in cv.split(X):
     
     all_features = list(X_train_piml.columns)
     
-    # Scale features
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train_piml[all_features])
     X_val_scaled = scaler.transform(X_val_piml[all_features])
     
-    # Train Extra Trees Regressor
     et = ExtraTreesRegressor(random_state=42, max_depth=None, min_samples_split=2, n_estimators=200)
     et.fit(X_train_scaled, y_train)
     piml_et_preds[val_idx] = np.clip(et.predict(X_val_scaled), 0.0, 100.0)
     
-    # Train MLP
     mlp = MLPRegressor(random_state=42, alpha=0.001, hidden_layer_sizes=(50, 50), learning_rate_init=0.01, max_iter=3000)
     mlp.fit(X_train_scaled, y_train)
     piml_mlp_preds[val_idx] = np.clip(mlp.predict(X_val_scaled), 0.0, 100.0)

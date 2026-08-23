@@ -13,13 +13,11 @@ df_test = pd.read_csv('test_dataset.csv')
 print(f"  Training set size: {df_train.shape[0]} rows")
 print(f"  Test set size:     {df_test.shape[0]} rows")
 
-# Define input features
 features = ['flow_rate_L_min', 'concentration_mol_L', 'inlet_temperature_K', 'length_m', 'jacket_temperature_K']
 X_train = df_train[features].copy()
 y_train = df_train['overall_yield'].copy().values
 X_test = df_test[features].copy()
 
-# Add standard engineered features
 print("[2/5] Engineering physical features (Residence time, Temperature differences)...")
 for df in [X_train, X_test]:
     df['residence_time'] = df['length_m'] / df['flow_rate_L_min']
@@ -27,7 +25,6 @@ for df in [X_train, X_test]:
     df['inv_temp_inlet'] = 1.0 / df['inlet_temperature_K']
     df['inv_temp_jacket'] = 1.0 / df['jacket_temperature_K']
 
-# Define the PFR ODE simulator
 def simulate_pfr(params, F, C0, T_in, L, T_j, N_steps=30):
     log_alpha, log_A1, E1, log_A2, E2, log_scale, order_a, order_b = params
     alpha = np.exp(log_alpha)
@@ -58,7 +55,6 @@ def simulate_pfr(params, F, C0, T_in, L, T_j, N_steps=30):
     return np.clip(scale * (CB / C0) * 100.0, 0.0, 100.0)
 
 print("[3/5] Fitting physical kinetics ODE model using SciPy optimizer...")
-# Extract arrays for training
 F_tr = X_train['flow_rate_L_min'].values
 C0_tr = X_train['concentration_mol_L'].values
 T_in_tr = X_train['inlet_temperature_K'].values
@@ -85,7 +81,6 @@ print(f"    Side Rxn Activation (E2):      {E2 * 8.314 * 10**-3:.2f} kJ/mol")
 print(f"    Desired Rxn Order (a):         {order_a:.4f}")
 print(f"    Side Rxn Order (b):            {order_b:.4f}")
 
-# Generate physical kinetics feature
 print("  Generating physical chemistry feature (y_phys)...")
 y_train_phys = simulate_pfr(best_params, F_tr, C0_tr, T_in_tr, L_tr, T_j_tr)
 
@@ -99,16 +94,13 @@ y_test_phys = simulate_pfr(best_params, F_te, C0_te, T_in_te, L_te, T_j_te)
 X_train['y_phys'] = y_train_phys
 X_test['y_phys'] = y_test_phys
 
-# Prepare data for ML
 all_features = list(X_train.columns)
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train[all_features])
 X_test_scaled = scaler.transform(X_test[all_features])
 
-# Fit ML Regressors
 print("[4/5] Training final Physics-Informed Blended Ensemble...")
 
-# 1. Multi-Layer Perceptron Regressor
 print("  Training MLP Neural Network...")
 mlp = MLPRegressor(
     random_state=42, 
@@ -120,7 +112,6 @@ mlp = MLPRegressor(
 mlp.fit(X_train_scaled, y_train)
 train_preds_mlp = np.clip(mlp.predict(X_train_scaled), 0.0, 100.0)
 
-# 2. Hist Gradient Boosting Regressor
 print("  Training HistGradientBoosting Regressor...")
 hgb = HistGradientBoostingRegressor(
     random_state=42,
@@ -131,7 +122,6 @@ hgb = HistGradientBoostingRegressor(
 hgb.fit(X_train_scaled, y_train)
 train_preds_hgb = np.clip(hgb.predict(X_train_scaled), 0.0, 100.0)
 
-# Blended training predictions (70% MLP, 30% HGB)
 train_preds_blend = 0.7 * train_preds_mlp + 0.3 * train_preds_hgb
 train_rmse = np.sqrt(mean_squared_error(y_train, train_preds_blend))
 print(f"  Ensemble Training RMSE: {train_rmse:.4f}%")
@@ -140,15 +130,12 @@ print("[5/5] Generating final predictions for test dataset...")
 test_preds_mlp = np.clip(mlp.predict(X_test_scaled), 0.0, 100.0)
 test_preds_hgb = np.clip(hgb.predict(X_test_scaled), 0.0, 100.0)
 
-# Blended test predictions
 test_preds_blend = 0.7 * test_preds_mlp + 0.3 * test_preds_hgb
 
-# Create submission file
 submission = pd.DataFrame({
     'overall_yield': np.round(test_preds_blend, 3)
 })
 
-# Save to predictions.csv
 submission.to_csv('predictions.csv', index=False)
 print("\nSuccess! Ensemble predictions saved to 'predictions.csv'.")
 print("Important: Rename 'predictions.csv' to your '[TeamName].csv' before submitting!")

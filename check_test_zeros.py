@@ -11,7 +11,6 @@ X_train = df_train[features].copy()
 y_train_zero = (df_train['overall_yield'] == 0.0).astype(int)
 X_test = df_test[features].copy()
 
-# Add engineered features
 for df in [X_train, X_test]:
     df['residence_time'] = df['length_m'] / df['flow_rate_L_min']
     df['temp_diff'] = df['jacket_temperature_K'] - df['inlet_temperature_K']

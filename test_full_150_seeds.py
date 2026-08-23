@@ -106,7 +106,6 @@ for n_splits in [5, 10]:
     rmses = []
     for seed in seeds:
         oof_mlp, oof_hgb, y = run_evaluation(df_150, seed=seed, n_splits=n_splits)
-        # Using the optimal 70/30 weight we found
         blend = 0.7 * oof_mlp + 0.3 * oof_hgb
         rmse = np.sqrt(mean_squared_error(y, blend))
         rmses.append(rmse)
